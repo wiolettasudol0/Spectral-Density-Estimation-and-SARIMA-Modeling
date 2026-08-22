@@ -1,0 +1,301 @@
+---
+title: "Time_Series_Project_KAWA"
+author: "Katarzyna Gołąb, Anna Wygoda, Wioletta Sudoł, Aneta Buszta"
+date: "`r Sys.Date()`"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: yes
+---
+
+# TASK 1
+
+-   Consider the monthly numbers of passengers (see below for file AKW-12.csv).
+-   Plot the spectral density estimator and discuss it. Try different weights (using Daniell kernels).
+-   Make numbers of passengers forecasts for each month of the first half of 2026.
+
+```{r message=FALSE, warning=FALSE}
+ 
+library(tseries)
+library(astsa)
+library(forecast)
+```
+
+## Working with data
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+AKW.12 <- read.csv("C:/Users/Public/AKW-12.csv")
+View(AKW.12)
+ 
+passengers<-AKW.12
+passengers_ts<-ts(passengers$passengers, start = c(2011,1), frequency = 12)
+ 
+plot(passengers_ts, main="Monthly number of passengers")
+abline(h=mean(passengers_ts), col="red")
+```
+
+## Monthplot
+
+```{r}
+monthplot(passengers_ts, main = "Monthplot of passengers") #checking if there is seasonality
+```
+
+The monthplot does not reveal a clear or stable monthly seasonal pattern, so there is no seasonality.
+
+## ACF and PACF
+
+```{r}
+par(mfrow = c(1,2))
+acf(passengers_ts, lag.max=72, main="ACF")
+pacf(passengers_ts, lag.max=72, main="PACF") 
+
+```
+
+The ACF and PACF analysis indicates that the time series is non-stationary, because of persistent autocorrelation.
+
+## Periodogram
+
+```{r}
+n = length(passengers_ts)
+Per= Mod(fft(passengers_ts-mean(passengers_ts)))^2/n  
+Freq = (1:n -1)/n
+plot(Freq[1:n], Per[1:n], type='h', lwd=2, ylab="Periodogram",
+     xlab="Frequency") 
+```
+
+```{r}
+nn=n/2
+u = which.max(Per[1:nn])
+uu = which.max(Per[1:nn][-u])
+1/Freq[u]
+1/Freq[uu]
+```
+
+
+This behavior is typical for non-stationary time series. We observed no clear isolated peaks corresponding to stable periodic behavior. Therefore, the periodogram of the raw series does not provide reliable evidence of seasonal cycles and should be interpreted with caution.
+
+```{r}
+d_passengers_ts<-diff(passengers_ts,1) 
+n = length(d_passengers_ts)
+Per= Mod(fft(d_passengers_ts-mean(d_passengers_ts)))^2/n  
+Freq = (1:n -1)/n
+plot(Freq[1:n], Per[1:n], type='h', lwd=2, ylab="Periodogram",
+     xlab="Frequency")    
+
+```
+
+The application of both regular and differencing allowed us the removal of the trend and annual cycles, which was a crucial step in achieving stationarity.
+
+```{r}
+nn=n/2
+u = which.max(Per[1:nn])
+uu = which.max(Per[1:nn][-u])
+1/Freq[u]
+1/Freq[uu]
+```
+
+This operation allowed us to find two the highest peaks in 45th and 15th month.
+
+```{r}
+y = cbind(1:nn, Freq[1:nn], 1/Freq[1:nn],Per[1:nn]); y[order(y[,4],decreasing = TRUE),]
+```
+
+### Daniell kernel
+
+```{r}
+par(mfrow=c(3,2))
+for ( i in 1:6 ) 
+{
+  mvspec(d_passengers_ts, kernel=kernel("daniell",c(1,i)))
+}
+```
+
+Among the spectral density estimates obtained using Daniell kernels, the plot from the third row was chosen by us as it provides a moderate level of smoothing.
+
+```{r}
+LM<-72
+par(mfrow=c(1,2))
+acf(d_passengers_ts, lag.max = LM, main="")
+pacf(d_passengers_ts, lag.max = LM, main="")
+```
+
+The ACF and PACF plots of the first-differenced series show a substantial reduction in long-range dependence compared to the original series. Autocorrelations decay rapidly and mostly lie within the confidence bounds, indicating that differencing has effectively removed the non-stationarity associated with the trend. Overall, the differenced series appears approximately stationary and we can proceed to forecasting.
+
+## Fitting models
+
+```{r}
+mA<-sarima(passengers_ts,0,1,1,0,0,0) # Sarima(0,1,1)(0,0,0)[12]
+mA_1<-sarima(passengers_ts,0,1,2,0,0,0) # Sarima(0,1,2)(0,0,0)[12]
+mA_2<-sarima(passengers_ts,1,1,2,0,0,0) # Sarima(1,1,2)(0,0,0)[12]
+mA_3<-sarima(passengers_ts,0,1,3,0,0,0) # Sarima(0,1,3)(0,0,0)[12]
+```
+
+Based on the analysis of ACF and PACF plots, spectral estimates, residual diagnostics and the Ljung–Box test, the ARIMA(0,1,2) model was identified as the most appropriate for the data. This model effectively removes autocorrelation from the residuals, which behave approximately as white noise, and the Ljung–Box test does not indicate significant remaining dependence. Higher-order models do not provide a meaningful improvement in fit, therefore we selected ARIMA(0,1,2) as the final model for forecasting.
+
+```{r}
+auto.arima(passengers_ts)
+```
+
+We use the automatic function as a supporting tool for automatic ARIMA model selection based on information criteria. It allows an objective comparison of a wide range of candidate models and identifies a model that balances goodness of fit and model complexity
+
+## Forecasting
+
+```{r}
+par(mfrow=c(1,1))
+modelll<-sarima(passengers_ts,0,1,2,0,0,0)
+forecast_result<-sarima.for(passengers_ts,n.ahead=6,0,1,2,0,0,0)
+```
+
+The plot shows the forecast of the number of passengers for the first half of 2026 obtained using the ARIMA(0,1,2) model. The point forecasts suggest a stabilization of passenger numbers in the short-term horizon, with no pronounced seasonal fluctuations. The shaded areas represent prediction intervals, which widen as the forecast horizon increases, reflecting growing uncertainty. These results are consistent with the earlier analysis.
+
+```{r}
+forecast_df <- data.frame(
+  Month = c("Jan", "Feb", "Mar", "Apr", "May", "Jun"),
+  Year = rep(2026, 6),
+  Forecast = forecast_result$pred,
+  Lower_CI = forecast_result$pred - 2*forecast_result$se, #?
+  Upper_CI = forecast_result$pred + 2*forecast_result$se  #?
+)
+```
+
+```{r}
+print(forecast_df)
+```
+
+We present in the table above the predicted numbers of passengers from January to June 2026.
+
+# TASK 2
+
+-   Consider the Aneta's time series from Lab 1 task 4.2 (i.e Average Monthly surface temperature, 1940-2024)
+-   Make all necessary transformations to get a stationary time series (noise).\
+-   If possible, choose the ARMA (p, q) model for stationary noise.
+
+```{r message=FALSE, warning =FALSE}
+library(astsa)
+```
+
+## Loading data
+
+This Dataset contains details of Average Monthly surface temperature (1940-2024). We decided to choose Poland. Values of this time series are from the 1st of January 1940 to the 15th of December 2024 - 1020 values in total.
+
+```{r message=FALSE, warning =FALSE}
+library(readr)
+temp <- read_csv("C:/Users/Public/average-monthly-surface-temperature.csv")
+```
+
+```{r}
+temp_pl <- subset(temp, Entity == "Poland")
+```
+
+```{r}
+temp_ts <- ts(temp_pl[,5], start = c(1940,1), frequency = 12)
+```
+
+## Working with data
+
+```{r}
+plot(temp_ts, main = "Average monthly surface temperature – Poland", ylab = "Temperature")
+abline(h = mean(temp_ts), col = "purple")
+```
+
+We can observe some trend and seasonality.
+
+## Monthplot
+
+```{r}
+monthplot(temp_ts)
+```
+
+The monthplot shows strong seasonality, which which is predictable for temperature-related data
+
+## ACF and PACF
+
+```{r}
+par(mfrow = c(1,2))
+LM = 100
+acf(temp_ts, lag.max = LM, main="ACF (Raw Data)")
+pacf(temp_ts, lag.max = LM, main="PACF (Raw Data)")
+par(mfrow = c(1,1))
+ 
+```
+
+Because the plots show strong seasonality, we will use lag-12 difference operator.
+
+```{r}
+d12_temp <- diff(temp_ts, lag = 12)
+acf(d12_temp, lag.max = LM, main="ACF (Raw Data)")
+pacf(d12_temp, lag.max = LM, main="PACF (Raw Data)")
+```
+
+```{r}
+plot(d12_temp, main = "Stationary Noise (After Seasonal & Regular Differencing)")
+abline(h = mean(d12_temp), col = "purple")
+```
+
+To check stationarity we will use Dickey-Fuller test.
+
+```{r}
+library(tseries)
+adf.test(d12_temp)# we expect p-value < 0.05 (stationary time series)
+```
+
+We recieved a p-value less than 0.05, so our time series could be stationary, after differencing with lag-12 to get rid of seasonality
+
+## Fitting models
+
+```{r}
+model_200100 <- sarima(d12_temp,2,0,0,1,0,0,12) # sarima(2,0,0)(1,0,0)[12]
+```
+
+```{r}
+model_201100 <- sarima(d12_temp,2,0,1,1,0,0,12) # sarima(2,0,1)(1,0,0)[12]
+```
+
+```{r}
+model_001001 <- sarima(d12_temp, 0,0,1,0,0,1,12) # sarima(0,0,1)(0,0,1)[12]
+```
+
+```{r}
+model_001001 <- sarima(d12_temp, 1,0,0,0,0,1,12) # sarima(1,0,0)(0,0,1)[12]
+```
+
+Models above do not satisfy the assumptions on the residuals - see Ljung-Box Q test.
+
+```{r}
+model_101101 <- sarima(d12_temp, 1,0,1,1,0,1,12) # sarima(1,0,1)(1,0,1)[12]
+```
+
+Residuals also do not satisfy assumtions, see:
+
+```{r}
+rr <- model_101101$fit$residuals
+Box.test(rr, lag = 25, type = "Ljung-Box", fitdf = 4)
+```
+
+At lag=25 we obtain p-value smaller than 0.05.
+
+```{r}
+model_201101 <- sarima(d12_temp,2,0,1,1,0,1,12) # sarima(2,0,1)(1,0,1)[12]
+```
+
+```{r}
+rr <- model_201101$fit$residuals
+p_values <- sapply(10:30, function(k) {
+  test <- Box.test(rr, lag = k, type = "Ljung-Box", fitdf = 4)
+  return(c("Lag" = k, "p-value" = round(test$p.value, 4)))
+})
+t(p_values)
+
+```
+
+Residuals satisfy assumptions.
+
+```{r}
+auto_noise <- auto.arima(d12_temp, seasonal = TRUE) 
+summary(auto_noise)
+```
+
+Function auto.arima proposed ARIMA(2,0,1)(1,0,0)[12] model, however we can see that in this model residuals do not satisfy assumtions.
+
+We conclude that model ARIMA(2,0,1)(1,0,1)[12] is the most suitable, so this is our final model.
